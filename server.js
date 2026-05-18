@@ -75,6 +75,12 @@ app.post('/api/extract', async (req, res) => {
 
         exec(command, (error, stdout, stderr) => {
             if (error) {
+              exec(command, (error, stdout, stderr) => {
+            if (error) {
+                // 🕵️‍♂️ Hatanın ne olduğunu Railway loglarına basacak dedektif satırları:
+                console.error("❌ YT-DLP ÇALIŞMA HATASI:", error);
+                console.error("❌ ERROR DETAYI (STDERR):", stderr);
+                
                 return res.status(500).json({ error: "Video çözülemedi." });
             }
             const downloadUrl = `${req.protocol}://${req.get('host')}/downloads/${outputFilename}`;
