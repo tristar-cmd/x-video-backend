@@ -21,7 +21,7 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
 
 app.use('/downloads', express.static(DOWNLOADS_DIR));
 
-// 2. Ana video çözme rotamız artık limit kontrollü!
+// 2. Ana video çözme rotamız
 app.post('/api/extract', async (req, res) => {
     const { videoUrl } = req.body;
     
@@ -66,7 +66,7 @@ app.post('/api/extract', async (req, res) => {
             }
         }
 
-        // 5. Her şey yolundaysa yt-dlp motorunu ateşliyoruz (Eski çalışan güvenli kodun)
+        // 5. Her şey yolundaysa yt-dlp motorunu ateşliyoruz
         const outputFilename = `video_${Date.now()}.mp4`;
         const outputPath = path.join(DOWNLOADS_DIR, outputFilename);
         const ytDlpPath = path.join(__dirname, 'yt-dlp');
@@ -74,8 +74,6 @@ app.post('/api/extract', async (req, res) => {
         const command = `${ytDlpPath} ${videoUrl} -f best -o ${outputPath}`;
 
         exec(command, (error, stdout, stderr) => {
-            if (error) {
-              exec(command, (error, stdout, stderr) => {
             if (error) {
                 // 🕵️‍♂️ Hatanın ne olduğunu Railway loglarına basacak dedektif satırları:
                 console.error("❌ YT-DLP ÇALIŞMA HATASI:", error);
