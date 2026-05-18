@@ -19,7 +19,11 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
     fs.mkdirSync(DOWNLOADS_DIR);
 }
 
-app.use('/downloads', express.static(DOWNLOADS_DIR));
+// Videonun tarayıcıda oynamasını engelleyip direkt bilgisayara inmesini sağlayan rota:
+app.get('/downloads/:filename', (req, res) => {
+    const filePath = path.join(DOWNLOADS_DIR, req.params.filename);
+    res.download(filePath); // Bu komut tarayıcıyı indirmeye zorlar
+});
 
 const ytDlpPath = path.join(__dirname, 'yt-dlp');
 
