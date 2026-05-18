@@ -3,16 +3,16 @@ const cors = require('cors');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 1. Railway kasasından şifreleri çekip Supabase bağlantısını kuruyoruz
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
 if (!fs.existsSync(DOWNLOADS_DIR)) {
@@ -21,11 +21,51 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
 
 app.use('/downloads', express.static(DOWNLOADS_DIR));
 
-// 2. Ana video çözme rotamız
+const ytDlpPath = path.join(__dirname, 'yt-dlp');
+
+// 🔄 OTO İNDİRME MOTORU: Eğer sunucuda yt-dlp yoksa otomatik indirir
+function checkAndDownloadYtDlp() {
+    if (fs.existsSync(ytDlpPath)) {
+        console.log("✅ yt-dlp motoru zaten sunucuda mevcut, hazır!");
+        return;
+    }
+
+    console.log("⏳ yt-dlp motoru bulunamadı! Resmi GitHub deposundan Linux sürümü indiriliyor...");
+    
+    function download(url) {
+        https.get(url, (res) => {
+            if (res.statusCode === 301 || res.statusCode === 302) {
+                download(res.headers.location);
+                return;
+            }
+
+            if (res.statusCode !== 200) {
+                console.error(`❌ İndirme başarısız. Durum Kodu: ${res.statusCode}`);
+                return;
+            }
+
+            const file = fs.createWriteStream(ytDlpPath);
+            res.pipe(file);
+
+            file.on('finish', () => {
+                file.close();
+                fs.chmodSync(ytDlpPath, '755'); // Çalıştırma izni ver
+                console.log('🎉 yt-dlp motoru başarıyla indirildi ve sisteme entegre edildi!');
+            });
+        }).on('error', (err) => {
+            console.error('❌ İndirme sırasında hata:', err.message);
+        });
+    }
+
+    download('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp');
+}
+
+// Sunucu başlarken motoru kontrol et
+checkAndDownloadYtDlp();
+
+// 🚀 Ana Video Çözme Rotası
 app.post('/api/extract', async (req, res) => {
     const { videoUrl } = req.body;
-    
-    // Eklentiden gelen kullanıcının gizli kimlik token'ı
     const authHeader = req.headers.authorization; 
     
     if (!authHeader) {
@@ -33,7 +73,6 @@ app.post('/api/extract', async (req, res) => {
     }
 
     try {
-        // 3. Token'ı doğrulayıp kullanıcının kim olduğunu Supabase'e soruyoruz
         const token = authHeader.split(' ')[1];
         const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
@@ -41,44 +80,35 @@ app.post('/api/extract', async (req, res) => {
             return res.status(401).json({ error: "Oturum geçersiz, lütfen tekrar giriş yapın." });
         }
 
-        // 4. Kullanıcının bugünkü indirme sayacını kontrol ediyoruz
         const today = new Date().toISOString().split('T')[0];
-        let { data: usage, error: usageError } = await supabase
-            .from('user_usage')
-            .select('*')
-            .eq('id', user.id)
-            .single();
+        let { data: usage } = await supabase.from('user_usage').select('*').eq('id', user.id).single();
 
         if (!usage) {
-            // İlk kez indirme yapan kullanıcıyı veri tabanına kaydediyoruz
             await supabase.from('user_usage').insert({ id: user.id, email: user.email, download_count: 1, last_download_date: today });
         } else {
             if (usage.last_download_date !== today) {
-                // Yeni bir güne girilmiş, sayacı sıfırlayıp 1 yapıyoruz
                 await supabase.from('user_usage').update({ download_count: 1, last_download_date: today }).eq('id', user.id);
             } else {
-                // Bugün zaten indirme yapmış, limit kontrolü (Ücretsiz sınır: 3)
                 if (usage.download_count >= 3) {
                     return res.status(403).json({ error: "🔒 Günlük ücretsiz indirme limitinize (3/3) ulaştınız! Sınırsız indirme için Premium'a geçin." });
                 }
-                // Limiti dolmadıysa sayacı 1 artırıyoruz
                 await supabase.from('user_usage').update({ download_count: usage.download_count + 1 }).eq('id', user.id);
             }
         }
 
-        // 5. Her şey yolundaysa yt-dlp motorunu ateşliyoruz
+        // Eğer motor henüz iniyorsa kullanıcıya bilgi verelim
+        if (!fs.existsSync(ytDlpPath)) {
+            return res.status(503).json({ error: "⏳ Sunucu motoru şu an optimize ediliyor, lütfen 10 saniye sonra tekrar deneyin." });
+        }
+
         const outputFilename = `video_${Date.now()}.mp4`;
         const outputPath = path.join(DOWNLOADS_DIR, outputFilename);
-        const ytDlpPath = path.join(__dirname, 'yt-dlp');
-
-        const command = `${ytDlpPath} ${videoUrl} -f best -o ${outputPath}`;
+        const command = `${ytDlpPath} "${videoUrl}" -f best -o "${outputPath}"`;
 
         exec(command, (error, stdout, stderr) => {
             if (error) {
-                // 🕵️‍♂️ Hatanın ne olduğunu Railway loglarına basacak dedektif satırları:
                 console.error("❌ YT-DLP ÇALIŞMA HATASI:", error);
                 console.error("❌ ERROR DETAYI (STDERR):", stderr);
-                
                 return res.status(500).json({ error: "Video çözülemedi." });
             }
             const downloadUrl = `${req.protocol}://${req.get('host')}/downloads/${outputFilename}`;
